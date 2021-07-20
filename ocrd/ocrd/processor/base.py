@@ -17,6 +17,7 @@ import os
 from os import getcwd
 import re
 import sys
+from PIL import Image
 
 import requests
 
@@ -35,6 +36,7 @@ from ..resource_manager import OcrdResourceManager
 # XXX imports must remain for backwards-compatibilty
 from .helpers import run_api, run_cli, run_processor, generate_processor_help # pylint: disable=unused-import
 
+
 class Processor():
     """
     A processor is a tool that implements the uniform OCR-D command-line interface
@@ -44,7 +46,7 @@ class Processor():
     and writes output files for them into the output fileGrp(s). It may take 
     a number of optional or mandatory parameters.
     """
-
+    Image.MAX_IMAGE_PIXELS = None
     def __init__(
             self,
             workspace,
