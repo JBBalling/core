@@ -34,6 +34,8 @@ __all__ = [
     'xywh_from_polygon',
 ]
 
+Image.MAX_IMAGE_PIXELS = None
+
 def adjust_canvas_to_rotation(size, angle):
     """Calculate the enlarged image size after rotation.
     
