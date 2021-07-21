@@ -55,7 +55,7 @@ class Workspace():
         overwrite_mode (boolean) : Whether to force add operations on this workspace globally
         baseurl (string) : Base URL to prefix to relative URL.
     """
-
+    Image.MAX_IMAGE_PIXELS = None
     def __init__(self, resolver, directory, mets=None, mets_basename='mets.xml', automatic_backup=False, baseurl=None):
         self.resolver = resolver
         self.directory = directory
