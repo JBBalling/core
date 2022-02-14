@@ -1,7 +1,6 @@
 from pathlib import Path
 from os.path import join
-from os import environ, listdir, getcwd
-import re
+from os import environ, listdir, getcwd, path
 from shutil import copytree
 from datetime import datetime
 from tarfile import open as open_tarfile
@@ -12,9 +11,7 @@ from yaml import safe_load, safe_dump
 
 from ocrd_validators import OcrdResourceListValidator
 from ocrd_utils import getLogger
-from ocrd_utils.constants import HOME, XDG_DATA_HOME, XDG_CONFIG_HOME
-from ocrd_utils.os import list_all_resources, pushd_popd
-
+from ocrd_utils.os import get_processor_resource_types, list_all_resources, pushd_popd
 from .constants import RESOURCE_LIST_FILENAME, RESOURCE_USER_LIST_COMMENT
 
 class OcrdResourceManager():
@@ -22,17 +19,48 @@ class OcrdResourceManager():
     """
     Managing processor resources
     """
-    def __init__(self):
+    def __init__(self, userdir=None, xdg_config_home=None, xdg_data_home=None):
         self.log = getLogger('ocrd.resource_manager')
         self.database = {}
+
+        self._xdg_data_home = xdg_data_home
+        self._xdg_config_home = xdg_config_home
+        self._userdir = userdir
+        self.user_list = Path(self.xdg_config_home, 'ocrd', 'resources.yml')
+
         self.load_resource_list(Path(RESOURCE_LIST_FILENAME))
-        self.user_list = Path(XDG_CONFIG_HOME, 'ocrd', 'resources.yml')
         if not self.user_list.exists():
             if not self.user_list.parent.exists():
                 self.user_list.parent.mkdir(parents=True)
             with open(str(self.user_list), 'w', encoding='utf-8') as f:
                 f.write(RESOURCE_USER_LIST_COMMENT)
         self.load_resource_list(self.user_list)
+
+    @property
+    def userdir(self):
+        if not self._userdir:
+            self._userdir = path.expanduser('~')
+            if 'HOME' in environ and environ['HOME'] != path.expanduser('~'):
+                self._userdir = environ['HOME']
+        return self._userdir
+
+    @property
+    def xdg_data_home(self):
+        if not self._xdg_data_home:
+            if 'XDG_DATA_HOME' in environ:
+                self._xdg_data_home = environ['XDG_DATA_HOME']
+            else:
+                self._xdg_data_home = join(self.userdir, '.local', 'share')
+        return self._xdg_data_home
+
+    @property
+    def xdg_config_home(self):
+        if not self._xdg_config_home:
+            if 'XDG_CONFIG_HOME' in environ:
+                self._xdg_config_home = environ['XDG_CONFIG_HOME']
+            else:
+                self._xdg_config_home = join(self.userdir, '.config')
+        return self._xdg_config_home
 
     def load_resource_list(self, list_filename, database=None):
         if not database:
@@ -57,7 +85,7 @@ class OcrdResourceManager():
         """
         if executable:
             return [(executable, self.database[executable])]
-        return [(x, y) for x, y in self.database.items()]
+        return self.database.items()
 
     def list_installed(self, executable=None):
         """
@@ -70,17 +98,22 @@ class OcrdResourceManager():
             # resources we know about
             all_executables = list(self.database.keys())
             # resources in the file system
-            parent_dirs = [join(x, 'ocrd-resources') for x in [XDG_DATA_HOME, '/usr/local/share']]
+            parent_dirs = [join(x, 'ocrd-resources') for x in [self.xdg_data_home, '/usr/local/share']]
             for parent_dir in parent_dirs:
                 if Path(parent_dir).exists():
                     all_executables += [x for x in listdir(parent_dir) if x.startswith('ocrd-')]
         for this_executable in set(all_executables):
             reslist = []
+            has_dirs, has_files = get_processor_resource_types(this_executable)
             for res_filename in list_all_resources(this_executable):
+                if Path(res_filename).is_dir() and not has_dirs:
+                    continue
+                if Path(res_filename).is_file() and not has_files:
+                    continue
                 res_name = Path(res_filename).name
                 resdict = [x for x in self.database.get(this_executable, []) if x['name'] == res_name]
                 if not resdict:
-                    self.log.info("%s resource '%s' (%s) not a known resource, creating stub in %s'" % (this_executable, res_name, res_filename, self.user_list))
+                    self.log.info("%s resource '%s' (%s) not a known resource, creating stub in %s'", this_executable, res_name, res_filename, self.user_list)
                     resdict = [self.add_to_user_database(this_executable, res_filename)]
                 resdict[0]['path'] = res_filename
                 reslist.append(resdict[0])
@@ -97,7 +130,8 @@ class OcrdResourceManager():
             user_database = safe_load(f) or {}
         if executable not in user_database:
             user_database[executable] = []
-        if not self.find_resources(executable=executable, name=res_name, database=user_database):
+        resources_found = self.find_resources(executable=executable, name=res_name, database=user_database)
+        if not resources_found:
             resdict = {
                 'name': res_name,
                 'url': url if url else '???',
@@ -106,10 +140,13 @@ class OcrdResourceManager():
                 'size': res_size
             }
             user_database[executable].append(resdict)
+        else:
+            resdict = resources_found[0]
         with open(self.user_list, 'w', encoding='utf-8') as f:
             f.write(RESOURCE_USER_LIST_COMMENT)
             f.write('\n')
             f.write(safe_dump(user_database))
+        self.load_resource_list(self.user_list)
         return resdict
 
     def find_resources(self, executable=None, name=None, url=None, database=None):
@@ -137,21 +174,22 @@ class OcrdResourceManager():
 
     def location_to_resource_dir(self, location):
         return '/usr/local/share/ocrd-resources' if location == 'system' else \
-                join(XDG_DATA_HOME, 'ocrd-resources') if location == 'data' else \
+                join(self.xdg_data_home, 'ocrd-resources') if location == 'data' else \
                 getcwd()
 
     def resource_dir_to_location(self, resource_path):
         resource_path = str(resource_path)
         return 'system' if resource_path.startswith('/usr/local/share/ocrd-resources') else \
-               'data' if resource_path.startswith(join(XDG_DATA_HOME, 'ocrd-resources')) else \
+               'data' if resource_path.startswith(join(self.xdg_data_home, 'ocrd-resources')) else \
                'cwd' if resource_path.startswith(getcwd()) else \
                resource_path
 
     def parameter_usage(self, name, usage='as-is'):
         if usage == 'as-is':
             return name
-        if usage == 'without-extension':
+        elif usage == 'without-extension':
             return Path(name).stem
+        raise ValueError("No such usage '%s'" % usage)
 
     def _download_impl(self, url, filename, progress_cb=None, size=None):
         log = getLogger('ocrd.resource_manager._download_impl')

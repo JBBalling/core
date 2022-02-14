@@ -34,7 +34,7 @@ help:
 	@echo "    docs-coverage  Calculate docstring coverage"
 	@echo "    docker         Build docker image"
 	@echo "    docker-cuda    Build docker GPU / CUDA image"
-	@echo "    bashlib        Build bash library"
+	@echo "    cuda-ubuntu    Install native CUDA toolkit in different versions"
 	@echo "    pypi           Build wheels and source dist and twine upload them"
 	@echo ""
 	@echo "  Variables"
@@ -100,6 +100,8 @@ generate-page: repo/assets
 	sed -i 's/_nsprefix_ = None/_nsprefix_ = "pc"/' $(GDS_PAGE)
 	# hack to ensure child nodes also have pc: prefix...
 	sed -i 's/.*_nsprefix_ = child_.prefix$$//' $(GDS_PAGE)
+	# replace the need for six since we target python 3.6+
+	sed -i 's/from six.moves/from itertools/' $(GDS_PAGE)
 
 #
 # Repos
@@ -169,7 +171,10 @@ coverage: assets
 .PHONY: docs
 # Build documentation
 docs:
-	for mod in $(BUILD_ORDER);do sphinx-apidoc -f -M -e -o docs/api/$$mod $$mod/$$mod 'ocrd_models/ocrd_models/ocrd_page_generateds.py';done
+	for mod in $(BUILD_ORDER);do sphinx-apidoc -f -M -e \
+		-o docs/api/$$mod $$mod/$$mod \
+		'ocrd_models/ocrd_models/ocrd_page_generateds.py' \
+		;done
 	cd docs ; $(MAKE) html
 
 docs-push: gh-pages docs
@@ -202,22 +207,42 @@ pyclean:
 # Docker
 #
 
+.PHONY: docker docker-cuda
+
 # Build docker image
 docker docker-cuda:
 	docker build -t $(DOCKER_TAG) --build-arg BASE_IMAGE=$(DOCKER_BASE_IMAGE) $(DOCKER_ARGS) .
 
 # Build docker GPU / CUDA image
-docker-cuda: DOCKER_BASE_IMAGE = nvidia/cuda:10.0-cudnn7-runtime-ubuntu18.04
+docker-cuda: DOCKER_BASE_IMAGE = nvidia/cuda:11.3.1-cudnn8-runtime-ubuntu18.04
 docker-cuda: DOCKER_TAG = ocrd/core-cuda
+docker-cuda: DOCKER_ARGS += --build-arg FIXUP="make cuda-ubuntu cuda-ldconfig"
 
 #
-# bash library
+# CUDA
 #
-.PHONY: bashlib
 
-# Build bash library
-bashlib:
-	cd ocrd/bashlib; make lib
+.PHONY: cuda-ubuntu cuda-ldconfig
+
+# Install native CUDA toolkit in different versions
+cuda-ubuntu: cuda-ldconfig
+	apt-get -y install --no-install-recommends cuda-runtime-10-0 cuda-runtime-10-1 cuda-runtime-10-2 cuda-runtime-11-0 cuda-runtime-11-1 cuda-runtime-11-3 libcudnn7
+
+cuda-ldconfig: /etc/ld.so.conf.d/cuda.conf
+	ldconfig
+
+/etc/ld.so.conf.d/cuda.conf:
+	@echo > $@
+	@echo /usr/local/cuda-10.0/lib64 >> $@
+	@echo /usr/local/cuda-10.0/targets/x86_64-linux/lib >> $@
+	@echo /usr/local/cuda-10.1/lib64 >> $@
+	@echo /usr/local/cuda-10.1/targets/x86_64-linux/lib >> $@
+	@echo /usr/local/cuda-10.2/lib64 >> $@
+	@echo /usr/local/cuda-10.2/targets/x86_64-linux/lib >> $@
+	@echo /usr/local/cuda-11.0/lib64 >> $@
+	@echo /usr/local/cuda-11.0/targets/x86_64-linux/lib >> $@
+	@echo /usr/local/cuda-11.1/lib64 >> $@
+	@echo /usr/local/cuda-11.1/targets/x86_64-linux/lib >> $@
 
 # Build wheels and source dist and twine upload them
 pypi: uninstall install
