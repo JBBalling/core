@@ -171,16 +171,24 @@ def process_images():  # pylint: disable=undefined-name
             _process(ws.mets_target)
             ws.reload_mets()
             for k in pages.keys():
-                pages[k] = {"img": None, "page": None}
+                pages[k] = {"img": None, "page": None, "fulltext": None}
 
                 page_file = next(ws.mets.find_files(
                     pageId=k,
                     fileGrp=tasks[-1].output_file_grps[0],
                 ))
+                fulltext_ocr_file = next(ws.mets.find_files(
+                    pageId=k,
+                    fileGrp=tasks[-4].output_file_grps[0],
+                ))
+
                 with pushd_popd(ws.directory):
                     if page_file and os.path.exists(page_file.local_filename):
                         with open(page_file.local_filename, "r", encoding="utf8") as f:
                             pages[k]["page"] = f.read()
+                    if fulltext_ocr_file and os.path.exists(fulltext_ocr_file.local_filename):
+                        with open(fulltext_ocr_file.local_filename, "r", encoding="utf8") as f:
+                            pages[k]["fulltext"] = f.read()
                     img_path = page_from_file(
                         page_file
                     ).get_Page().get_AlternativeImage()[-1].get_filename()
